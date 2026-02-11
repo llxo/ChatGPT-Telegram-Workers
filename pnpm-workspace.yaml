@@ -1,3 +1,10 @@
 packages:
   - packages/apps/*
   - packages/lib/*
+
+ignoredBuiltDependencies:
+  - esbuild
+  - sharp
+  - sqlite3
+  - unrs-resolver
+  - workerd

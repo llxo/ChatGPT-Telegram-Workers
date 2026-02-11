@@ -2,6 +2,17 @@ import type { ChatStreamTextHandler } from './types';
 import { ENV } from '#/config';
 import { Stream } from './stream';
 
+function stripThinkingContent(text: string): string {
+    // 移除已闭合的 <think>...</think> 和 <thinking>...</thinking> 块
+    text = text.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/g, '');
+    // 如果存在未闭合的 <think> 或 <thinking> 标签，移除该标签及其后的所有内容
+    const match = text.match(/<think(?:ing)?>/);
+    if (match) {
+        text = text.substring(0, match.index!);
+    }
+    return text.trimStart();
+}
+
 export interface SseChatCompatibleOptions {
     streamBuilder?: (resp: Response, controller: AbortController) => Stream;
     contentExtractor?: (data: object) => string | null;
@@ -47,6 +58,7 @@ export async function streamHandler<T>(stream: AsyncIterable<T>, contentExtracto
     let lengthDelta = 0;
     let updateStep = 50;
     let lastUpdateTime = Date.now();
+    let lastStreamText = '';
     try {
         for await (const part of stream) {
             const textPart = contentExtractor(part);
@@ -65,13 +77,17 @@ export async function streamHandler<T>(stream: AsyncIterable<T>, contentExtracto
                 }
                 lengthDelta = 0;
                 updateStep += 20;
-                await onStream?.(`${contentFull}\n...`);
+                const displayText = stripThinkingContent(contentFull);
+                if (displayText && displayText !== lastStreamText) {
+                    lastStreamText = displayText;
+                    await onStream?.(`${displayText}\n...`);
+                }
             }
         }
     } catch (e) {
         contentFull += `\nError: ${(e as Error).message}`;
     }
-    return contentFull;
+    return stripThinkingContent(contentFull);
 }
 
 export async function mapResponseToAnswer(resp: Response, controller: AbortController, options: SseChatCompatibleOptions | null, onStream: ((text: string) => Promise<any>) | null): Promise<string> {
@@ -95,7 +111,7 @@ export async function mapResponseToAnswer(resp: Response, controller: AbortContr
         throw new Error(options.errorExtractor?.(result) || 'Unknown error');
     }
 
-    return options.fullContentExtractor?.(result) || '';
+    return stripThinkingContent(options.fullContentExtractor?.(result) || '');
 }
 
 export async function requestChatCompletions(url: string, header: Record<string, string>, body: any, onStream: ChatStreamTextHandler | null, options: SseChatCompatibleOptions | null): Promise<string> {

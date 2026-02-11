@@ -223,8 +223,8 @@ class ConfigMerger {
     }
   }
 }
-const BUILD_TIMESTAMP = 1761036146;
-const BUILD_VERSION = "87adca1";
+const BUILD_TIMESTAMP = 1770810583;
+const BUILD_VERSION = "f4f51d2";
 function createAgentUserConfig() {
   return Object.assign(
     {},
@@ -1059,6 +1059,14 @@ class LineDecoder {
     return lines;
   }
 }
+function stripThinkingContent(text) {
+  text = text.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/g, "");
+  const match = text.match(/<think(?:ing)?>/);
+  if (match) {
+    text = text.substring(0, match.index);
+  }
+  return text.trimStart();
+}
 function fixOpenAICompatibleOptions(options) {
   options = options || {};
   options.streamBuilder = options.streamBuilder || function(r, c) {
@@ -1094,6 +1102,7 @@ async function streamHandler(stream, contentExtractor, onStream) {
   let lengthDelta = 0;
   let updateStep = 50;
   let lastUpdateTime = Date.now();
+  let lastStreamText = "";
   try {
     for await (const part of stream) {
       const textPart = contentExtractor(part);
@@ -1112,15 +1121,19 @@ async function streamHandler(stream, contentExtractor, onStream) {
         }
         lengthDelta = 0;
         updateStep += 20;
-        await onStream?.(`${contentFull}
+        const displayText = stripThinkingContent(contentFull);
+        if (displayText && displayText !== lastStreamText) {
+          lastStreamText = displayText;
+          await onStream?.(`${displayText}
 ...`);
+        }
       }
     }
   } catch (e) {
     contentFull += `
 Error: ${e.message}`;
   }
-  return contentFull;
+  return stripThinkingContent(contentFull);
 }
 async function mapResponseToAnswer(resp, controller, options, onStream) {
   options = fixOpenAICompatibleOptions(options || null);
@@ -1141,7 +1154,7 @@ async function mapResponseToAnswer(resp, controller, options, onStream) {
   if (options.errorExtractor?.(result)) {
     throw new Error(options.errorExtractor?.(result) || "Unknown error");
   }
-  return options.fullContentExtractor?.(result) || "";
+  return stripThinkingContent(options.fullContentExtractor?.(result) || "");
 }
 async function requestChatCompletions(url, header, body, onStream, options) {
   const controller = new AbortController();
@@ -2033,17 +2046,17 @@ class AgentListCallbackQueryHandler {
     this.createKeyboard = this.createKeyboard.bind(this);
   }
   static Chat() {
-    return new AgentListCallbackQueryHandler("al:", "ca:", () => {
-      return CHAT_AGENTS.filter((agent) => agent.enable(ENV.USER_CONFIG)).map((agent) => agent.name);
+    return new AgentListCallbackQueryHandler("al:", "ca:", (context) => {
+      return CHAT_AGENTS.filter((agent) => agent.enable(context.USER_CONFIG)).map((agent) => agent.name);
     });
   }
   static Image() {
-    return new AgentListCallbackQueryHandler("ial:", "ica:", () => {
-      return IMAGE_AGENTS.filter((agent) => agent.enable(ENV.USER_CONFIG)).map((agent) => agent.name);
+    return new AgentListCallbackQueryHandler("ial:", "ica:", (context) => {
+      return IMAGE_AGENTS.filter((agent) => agent.enable(context.USER_CONFIG)).map((agent) => agent.name);
     });
   }
   handle = async (query, data, context) => {
-    const names = this.agentLoader();
+    const names = this.agentLoader(context);
     const sender = MessageSender.fromCallbackQuery(context.SHARE_CONTEXT.botToken, query);
     const params = {
       chat_id: query.message?.chat.id || 0,
@@ -2096,7 +2109,7 @@ function loadAgentContext(query, data, context, prefix, agentLoader, changeAgent
   if (!agent) {
     throw new Error(`agent not found: ${agent}`);
   }
-  const conf = changeAgentType(ENV.USER_CONFIG, agent);
+  const conf = changeAgentType(context.USER_CONFIG, agent);
   const theAgent = agentLoader(conf);
   if (!theAgent?.modelKey) {
     throw new Error(`modelKey not found: ${agent}`);
